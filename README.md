@@ -17,8 +17,11 @@
 
 ```mermaid
 graph TD;
-    A[React フロントエンド<br>(ユーザーのブラウザ)] --> B[Google Apps Script (GAS)<br>(Google 上でホスト)];
-    B --> C[Google スライド<br>(対象のプレゼンテーション)];
+    A["React フロントエンド
+(ユーザーのブラウザ)"] --> B["Google Apps Script (GAS)
+(Google 上でホスト)"];
+    B --> C["Google スライド
+(対象のプレゼンテーション)"];
 ```
 
 1.  ユーザーが React アプリケーション上で Google スライドの URL を指定します。
