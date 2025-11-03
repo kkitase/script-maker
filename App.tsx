@@ -1,8 +1,9 @@
-
-
 import React, { useState, useCallback, FC, useMemo } from 'react';
 import { enhanceNotesWithGemini } from './services/geminiService';
 import { SparklesIcon, ClipboardIcon, CheckIcon, LoadingSpinnerIcon, DocumentDuplicateIcon, XMarkIcon, ArrowUpTrayIcon, TrashIcon } from './components/icons';
+import { diffChars, Change } from 'diff';
+import { GenerateContentResponse } from '@google/generative-ai';
+import systemInstruction from './prompt.md?raw';
 
 // --- Helper Components ---
 
@@ -36,6 +37,21 @@ const OutputBlock: FC<OutputBlockProps> = ({ title, content, onCopy, isCopied, i
   </div>
 );
 
+const DiffView: FC<{ oldStr: string; newStr: string }> = ({ oldStr, newStr }) => {
+  const differences = diffChars(oldStr, newStr);
+
+  return (
+    <pre className="whitespace-pre-wrap break-words font-mono text-sm p-4 bg-gray-900 rounded-md">
+      {
+        differences.map((part, index) => {
+          const color = part.added ? 'bg-green-900/50 text-green-300' : part.removed ? 'bg-red-900/50 text-red-300' : 'text-gray-400';
+          return <span key={index} className={`${color} transition-colors duration-300`}>{part.value}</span>;
+        })
+      }
+    </pre>
+  );
+};
+
 interface GasHelperModalProps {
   slideId: string;
   onClose: () => void;
@@ -57,13 +73,12 @@ function getSpeakerNotes() {
       allNotes.push(notes.trim());
     });
 
-    const output = allNotes.join('\\n---\\n');
+    const output = allNotes.join('\n---\n');
     Logger.log(output);
     
-    // Show a sidebar with the notes as SlidesApp does not support showModalDialog
     const htmlContent = '<h3>コピー用のスピーカーノート:</h3>' +
                         '<textarea style="width: 95%; height: 80vh;" readonly>' + 
-                        output.replace(/\\n/g, '&#10;') + 
+                        output.replace(/\n/g, '&#10;') + 
                         '</textarea>' +
                         '<p>上のテキストをコピーして、前のタブに戻り貼り付けてください。</p>';
 
@@ -221,6 +236,7 @@ const App: React.FC = () => {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [copiedSection, setCopiedSection] = useState<'markdown' | 'ai' | null>(null);
+  const [apiResponse, setApiResponse] = useState<GenerateContentResponse | null>(null);
   
   const [activeTab, setActiveTab] = useState<Tab>('url');
   const [slideUrl, setSlideUrl] = useState('');
@@ -247,6 +263,7 @@ const App: React.FC = () => {
     setError(null);
     setMarkdownOutput('');
     setEnhancedOutput('');
+    setApiResponse(null);
 
     if (!rawNotes.trim()) {
       setError("最初にノートを貼り付けてください。");
@@ -276,13 +293,15 @@ const App: React.FC = () => {
     setIsLoading(true);
     setError(null);
     setEnhancedOutput('');
+    setApiResponse(null);
 
     try {
-      const result = await enhanceNotesWithGemini(markdownOutput);
-      setEnhancedOutput(result);
+      const response = await enhanceNotesWithGemini(markdownOutput, systemInstruction);
+      setApiResponse(response);
+      setEnhancedOutput(response.text());
     } catch (err: unknown) {
       if (err instanceof Error) {
-        setError(err.message);
+        setError(err.toString());
       } else {
         setError("不明なエラーが発生しました。");
       }
@@ -343,10 +362,8 @@ function updateSpeakerNotes() {
       if (notesShape) {
         const textRange = notesShape.getText();
         
-        // 新しいテキストを設定します。
         textRange.setText(notesText);
 
-        // テキストが空でない場合、新しいフォントスタイルを適用します。
         if (notesText.trim() !== '') {
           textRange.getTextStyle().setFontFamily(fontFamily).setFontSize(fontSize);
         }
@@ -356,7 +373,7 @@ function updateSpeakerNotes() {
 
   let alertMessage = countToUpdate + '枚のスライドのスピーカーノートを更新しました！';
   if (numSlides !== numNotes) {
-    alertMessage += '\\n\\n警告: スライドの枚数 (' + numSlides + '枚) と入力されたノートの数 (' + numNotes + '個) が異なります。最初の' + countToUpdate + '枚分だけが更新されました。';
+    alertMessage += '\n\n警告: スライドの枚数 (' + numSlides + '枚) と入力されたノートの数 (' + numNotes + '個) が異なります。最初の' + countToUpdate + '枚分だけが更新されました。';
   }
   
   SlidesApp.getUi().alert(alertMessage);
@@ -390,7 +407,6 @@ function clearAllSpeakerNotes() {
       const notesShape = notesPage.getSpeakerNotesShape();
       
       if (notesShape) {
-        // テキストをクリアします。
         notesShape.getText().setText('');
       }
     }
@@ -413,10 +429,10 @@ function clearAllSpeakerNotes() {
       <main className="max-w-4xl mx-auto px-4 py-8 md:py-12">
         <header className="text-center mb-10">
           <h1 className="text-4xl md:text-5xl font-bold text-white tracking-tight">
-            スライドのノートをマークダウンへ
+            Script Maker
           </h1>
           <p className="mt-4 text-lg text-gray-400">
-            Googleスライドのスピーカーノートを簡単に変換・AIで強化。ノートの更新やクリアも可能。
+            Google スライドのスピーカーノートを簡単に抽出、校正。ノートの更新やクリアも可能。
           </p>
         </header>
 
@@ -596,7 +612,27 @@ function clearAllSpeakerNotes() {
             </div>
         )}
 
-        {markdownOutput && (
+        {enhancedOutput && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
+            <OutputBlock
+              title="修正版ノート"
+              content={enhancedOutput}
+              onCopy={() => handleCopy(enhancedOutput, 'ai')}
+              isCopied={copiedSection === 'ai'}
+              icon={<SparklesIcon className="w-5 h-5 text-teal-400" />}
+            />
+            <div className="bg-gray-800 rounded-lg shadow-lg">
+              <div className="flex items-center p-4 border-b border-gray-700">
+                <h3 className="text-lg font-semibold text-gray-200">変更点の分析 (差分)</h3>
+              </div>
+              <div className="p-4">
+                <DiffView oldStr={markdownOutput} newStr={enhancedOutput} />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {markdownOutput && !enhancedOutput && (
           <OutputBlock
             title="整形済みマークダウン"
             content={markdownOutput}
@@ -605,14 +641,13 @@ function clearAllSpeakerNotes() {
           />
         )}
 
-        {enhancedOutput && (
-          <OutputBlock
-            title="AIによる要約"
-            content={enhancedOutput}
-            onCopy={() => handleCopy(enhancedOutput, 'ai')}
-            isCopied={copiedSection === 'ai'}
-            icon={<SparklesIcon className="w-5 h-5 text-teal-400" />}
-          />
+        {apiResponse && (
+            <div className="mt-6">
+                <h3 className="text-lg font-semibold text-gray-400 mb-2">デバッグ情報: APIレスポンス</h3>
+                <pre className="p-4 bg-gray-900 text-xs text-gray-400 rounded-lg overflow-x-auto"><code>
+                    {JSON.stringify(apiResponse, null, 2)}
+                </code></pre>
+            </div>
         )}
       </main>
       <footer className="text-center py-6 text-sm text-gray-600">
