@@ -1,0 +1,5 @@
+{
+  "name": "Script Maker",
+  "description": "An application to convert Google Slides speaker notes into formatted Markdown, with an option to enhance them using AI.",
+  "requestFramePermissions": []
+}
